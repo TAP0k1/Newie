@@ -448,13 +448,67 @@ $('#lg').onclick = () => {
 };
 applyLang(); applyMode();
 
-/* подключение к ИИ */
-try{
-  if(window.claude && claude.use){
-    claude.use('sample').then(s => { sample = s; }).catch(() => {});
-    claude.use('dictation').then(d => { dict = d; if(d) setupDict(); }).catch(() => {});
+/* подключение к ИИ через Cloudflare */
+sample = async (messages, options) => {
+  const url = 'https://newie.slavy321.workers.dev';
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: messages })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return { text: data.text };
+  } catch (e) {
+    console.error("AI Error:", e);
+    throw new Error("network_error");
   }
-}catch(e){}
+};
+
+/* подключение микрофона */
+dict = {
+  start: async () => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      alert("Ваш браузер не поддерживает голосовой ввод");
+      throw new Error("not_supported");
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    dict.rec = new SR();
+    dict.rec.lang = lang === 'en' ? 'en-US' : 'ru-RU';
+    dict.rec.intermittentResults = true;
+    dict.rec.onresult = (e) => {
+      let final = '';
+      let partial = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else partial += e.results[i][0].transcript;
+      }
+      if (final) dict.onFinal && dict.onFinal({ text: final });
+      if (partial) dict.onPartial && dict.onPartial({ text: partial });
+    };
+    dict.rec.onstart = () => dict.onState && dict.onState({ state: 'listening' });
+    dict.rec.onend = () => dict.onState && dict.onState({ state: 'idle' });
+    dict.rec.onerror = (e) => {
+      dict.onState && dict.onState({ state: 'idle' });
+      throw e;
+    };
+    dict.rec.start();
+  },
+  stop: () => { if (dict.rec) dict.rec.stop(); },
+  onPartial: ({text}) => { input.value = base + text; },
+  onFinal: ({text}) => { base += text + ' '; input.value = base; },
+  onState: ({state}) => {
+    listening = state === 'listening';
+    mic.classList.toggle('on', listening);
+    if(listening) setState('listening');
+    else if(state === 'idle'){
+      if(!busy) setState('idle');
+      if(voiceTurn){ voiceTurn = false; if(input.value.trim()) send(input.value); }
+    }
+  }
+};
+setupDict();
 </script>
 </body>
 </html>
